@@ -6,7 +6,7 @@ import ParseError
 %access public export
 
 Source : Type
-Source = String
+Source = List Char
 
 record State where
   constructor ST
@@ -28,6 +28,13 @@ Functor Processed where
   map f (Empty x)    = Empty (f x)
 
 data Parser a = PT (State -> Processed (Reply a))
+
+setExpectError : String -> ParseError -> ParseError
+setExpectError msg err   = setErrorMessage (Expect msg) err
+sysUnExpectError : String -> SourcePosition -> Reply a
+sysUnExpectError msg pos = Error (newErrorMessage (SysUnExpect msg) pos)
+unknownError : State -> ParseError
+unknownError state       = newErrorUnknown (statePos state)
 
 runP : Parser a -> State -> Processed (Reply a)
 runP (PT p) = p
@@ -64,9 +71,6 @@ mergeErrorReply err1 reply
   = case reply of
       Ok x state err2 => Ok x state (mergeError err1 err2)
       Error err2      => Error (mergeError err1 err2)
-
-unknownError : State -> ParseError
-unknownError state = newErrorUnknown (statePos state)
 
 Applicative Parser where
   pure x
@@ -105,3 +109,93 @@ Monad Parser where
         Consumed (Error err1)       => Consumed (Error err1)
         Empty    (Error err1)       => Empty    (Error err1)
       )
+
+Alternative Parser where
+  empty
+    = PT (\state => Empty (Error (unknownError state)))
+  (PT p1) <|> (PT p2)
+    = PT (\state =>
+        case (p1 state) of
+          Empty (Error err) => case (p2 state) of
+                                 Empty reply => Empty (mergeErrorReply err reply)
+                                 consumed    => consumed
+          other             => other
+      )
+
+-----------------------------------------------------------
+-- Primitive Parsers:
+--  try, satisfy, onFail, unexpected and updateState
+-----------------------------------------------------------
+
+try : Parser a -> Parser a
+try (PT p)
+    = PT (\ state =>
+        case (p state) of
+          Consumed (Error err)  => Empty (Error (setErrorPos (statePos state) err))
+          Consumed ok           => Empty ok
+          empty                 => empty
+      )
+
+token : Parser a -> Parser a
+token p --obsolete, use "try" instead
+    = try p
+
+
+satisfy : (Char -> Bool) -> Parser Char
+satisfy test
+    = PT ( \ s => let pos = statePos s in
+        case (stateInput s) of
+          (c :: cs) => if test c
+                       then let newpos = updatePos pos c
+                                newstate = ST cs newpos
+                            in Consumed (Ok c newstate (newErrorUnknown newpos))
+                       else Empty (sysUnExpectError (show [c]) pos)
+          []        => Empty (sysUnExpectError "" pos)
+      )
+
+onFail : Parser a -> String -> Parser a
+onFail (PT p) msg
+    = PT (\state =>
+        case (p state) of
+          Empty reply =>
+            Empty $
+               case reply of
+                 Error err        => Error (setExpectError msg err)
+                 Ok x state1 err  => if errorIsUnknown err
+                                     then  reply
+                                     else Ok x state1 (setExpectError msg err)
+          other       => other
+      )
+
+updateState : (State -> State) -> Parser State
+updateState f
+    = PT (\state => Empty (Ok state (f state) (unknownError state)))
+
+unexpected : String -> Parser a
+unexpected msg
+    = PT (\state => Empty (Error (newErrorMessage (UnExpect msg) (statePos state))))
+
+
+string : List Char -> Parser (List Char)
+string str = PT walkAll where
+  walkAll (ST input pos) = walk1 str input where
+    ok : Source -> Reply (List Char)
+    ok cs = let newpos = updatePosChars pos str
+                newstate = ST cs newpos
+            in (Ok str newstate (newErrorUnknown newpos))
+
+    errEof : Reply (List Char)
+    errEof = Error (setErrorMessage (Expect (show str)) (newErrorMessage (SysUnExpect "") pos))
+
+    errExpect : Char -> Reply (List Char)
+    errExpect c = Error (setErrorMessage (Expect (show str)) (newErrorMessage (SysUnExpect (show [c])) pos))    --
+
+    walk : (List Char) -> Source -> Reply (List Char)
+    walk [] cs                = ok cs
+    walk xs []                = errEof
+    walk (x :: xs) (c :: cs)  = if x == c then walk xs cs else errExpect c
+
+    walk1 : (List Char) -> Source -> Processed (Reply (List Char))
+    walk1 [] cs               = Empty (ok cs)
+    walk1 xs []               = Empty (errEof)
+    walk1 (x :: xs) (c :: cs) = if x == c then Consumed (walk xs cs) else Empty (errExpect c)
