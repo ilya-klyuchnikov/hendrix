@@ -64,3 +64,26 @@ mergeErrorReply err1 reply
   = case reply of
       Ok x state err2 => Ok x state (mergeError err1 err2)
       Error err2      => Error (mergeError err1 err2)
+
+unknownError : State -> ParseError
+unknownError state = newErrorUnknown (statePos state)
+
+Applicative Parser where
+  pure x = PT (\state => Empty (Ok x state (unknownError state)))
+  -- TODO. I guess that Processed and reply are monads, but who cares here?
+  (PT f) <*> (PT g) = ?holeApplyApplicative
+
+Monad Parser where
+  (PT p) >>= next
+    = PT (\state => case (p state) of
+        Consumed (Ok x state1 err1) =>
+          case runP (next x) state1 of
+            Consumed reply2 => Consumed reply2
+            Empty    reply2 => Consumed (mergeErrorReply err1 reply2)
+        Empty    (Ok x state1 err1) =>
+          case runP (next x) state1 of
+            Consumed reply2 => Consumed reply2
+            Empty    reply2 => Empty (mergeErrorReply err1 reply2)
+        Consumed (Error err1)       => Consumed (Error err1)
+        Empty    (Error err1)       => Empty    (Error err1)
+      )
