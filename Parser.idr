@@ -62,7 +62,7 @@ Functor Parser where
         = case reply of
             Ok x state err => Ok (f x) state err
             Error err      => Error err
-  -- alternative via functora
+  -- alternative via functors
   -- map f (PT p) = PT (map (map f) . p)
 
 
@@ -199,3 +199,19 @@ string str = PT walkAll where
     walk1 [] cs               = Empty (ok cs)
     walk1 xs []               = Empty (errEof)
     walk1 (x :: xs) (c :: cs) = if x == c then Consumed (walk xs cs) else Empty (errExpect c)
+
+---- Testing
+testString1 : parse (string ['a', 'b']) "my_source" ['a', 'b', 'c'] = Right ['a', 'b']
+testString1 = Refl
+
+testString2 : parse (string ['a']) "my_source" [] = Left (PError (SourcePos "my_source" 1 1) [Expect "['a']", SysUnExpect ""])
+testString2 = Refl
+
+testString3 : parse (string ['a', 'b']) "my_source" ['a', 'c'] = Left (PError (SourcePos "my_source" 1 1) [Expect "['a', 'b']", SysUnExpect "['c']"])
+testString3 = Refl
+
+testBind : parse ( (string ['a', 'b']) >>= \x => (string ['c', 'd']))  "my_source" ['a', 'b', 'c', 'd'] = Right ['c', 'd']
+testBind = Refl
+
+testBindAndPure : parse ( (string ['a', 'b']) >>= \x => (string ['c', 'd']) >>= \y => pure (x ++ y))  "my_source" ['a', 'b', 'c', 'd'] = Right ['a', 'b', 'c', 'd']
+testBindAndPure = Refl
