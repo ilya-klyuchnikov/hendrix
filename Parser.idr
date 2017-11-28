@@ -5,6 +5,8 @@ import ParseError
 %default total
 %access public export
 
+infixl  0 <?>
+
 Source : Type
 Source = List Char
 
@@ -93,6 +95,29 @@ Applicative Parser where
         Empty    (Error err1)       => Empty    (Error err1)
       )
 
+-- Applicative f => f (a -> b) -> f a -> f b
+infixl 2 <*>|
+(<*>|) : Parser (a -> b) -> Lazy (Parser a) -> Parser b
+(PT f) <*>| a
+  = PT (\state => case (f state) of
+    Consumed (Ok g state1 err1) =>
+      let (PT a') = a in
+      case (a' state1) of
+          Consumed (Ok b state2 err2) => Consumed (Ok (g b) state2 err2)
+          Empty    (Ok b state2 err2) => Consumed (Ok (g b) state2 (mergeError err1 err2))
+          Consumed (Error err2)       => Consumed (Error err2)
+          Empty    (Error err2)       => Consumed (Error (mergeError err1 err2))
+    Empty    (Ok g state1 err1) =>
+      let (PT a') = a in
+      case (a' state1) of
+          Consumed (Ok b state2 err2) => Consumed (Ok (g b) state2 err2)
+          Empty    (Ok b state2 err2) => Empty    (Ok (g b) state2 (mergeError err1 err2))
+          Consumed (Error err2)       => Consumed (Error err2)
+          Empty    (Error err2)       => Consumed (Error (mergeError err1 err2))
+    Consumed (Error err1)       => Consumed (Error err1)
+    Empty    (Error err1)       => Empty    (Error err1)
+  )
+
 Monad Parser where
   (PT p) >>= next
     = PT (\state => case (p state) of
@@ -121,6 +146,47 @@ Alternative Parser where
                                  consumed    => consumed
           other             => other
       )
+
+infixl 3 <|>|
+(<|>|) : Parser a -> Lazy (Parser a) -> Parser a
+(PT p1) <|>| p2
+  = PT (\state =>
+      case (p1 state) of
+        Empty (Error err) => let (PT p2') = p2 in
+                             case (p2' state) of
+                               Empty reply => Empty (mergeErrorReply err reply)
+                               consumed    => consumed
+        other             => other
+    )
+
+----------
+
+updateState : (State -> State) -> Parser State
+updateState f
+    = PT (\state => Empty (Ok state (f state) (unknownError state)))
+
+getState : Parser State
+getState = updateState id
+
+setState : State -> Parser State
+setState state = updateState (const state)
+
+unexpected : String -> Parser a
+unexpected msg
+    = PT (\state => Empty (Error (newErrorMessage (UnExpect msg) (statePos state))))
+
+getPosition : Parser SourcePosition
+getPosition = do state <- getState; pure (statePos state)
+
+getInput : Parser Source
+getInput = do state <- getState; pure (stateInput state)
+
+setPosition : SourcePosition -> Parser ()
+setPosition pos = do updateState (\ s => ST (stateInput s) pos); pure ()
+
+setInput : Source -> Parser ()
+setInput input = do updateState (\ s => ST input (statePos s)); pure ()
+
 
 -----------------------------------------------------------
 -- Primitive Parsers:
@@ -167,15 +233,6 @@ onFail (PT p) msg
           other       => other
       )
 
-updateState : (State -> State) -> Parser State
-updateState f
-    = PT (\state => Empty (Ok state (f state) (unknownError state)))
-
-unexpected : String -> Parser a
-unexpected msg
-    = PT (\state => Empty (Error (newErrorMessage (UnExpect msg) (statePos state))))
-
-
 string : List Char -> Parser (List Char)
 string str = PT walkAll where
   walkAll (ST input pos) = walk1 str input where
@@ -199,6 +256,28 @@ string str = PT walkAll where
     walk1 [] cs               = Empty (ok cs)
     walk1 xs []               = Empty (errEof)
     walk1 (x :: xs) (c :: cs) = if x == c then Consumed (walk xs cs) else Empty (errExpect c)
+
+oneOf :  List Char -> Parser Char
+oneOf cs  = satisfy (\c => c `elem` cs)
+
+noneOf :  List Char -> Parser Char
+noneOf cs  = satisfy (\c => not (c `elem` cs))
+
+anySymbol : Parser Char
+anySymbol = satisfy (const True)
+
+choice : List (Parser a) -> Parser a
+choice ps = foldr (<|>) empty ps
+
+option : a -> Parser a -> Parser a
+option x p = p <|> pure x
+
+optional : Parser a -> Parser ()
+optional p = do { p; pure () } <|> pure ()
+
+between : Parser open -> Parser close -> Parser a -> Parser a
+between op cl p = do op; x <- p; cl; pure x
+
 
 ---- Testing
 testString1 : parse (string ['a', 'b']) "my_source" ['a', 'b', 'c'] = Right ['a', 'b']
