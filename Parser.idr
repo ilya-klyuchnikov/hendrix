@@ -3,7 +3,7 @@ module Parser
 import ParseError
 
 %default total
-%access public export
+%access export
 
 infixl  0 <?>
 
@@ -278,6 +278,15 @@ optional p = do { p; pure () } <|> pure ()
 between : Parser open -> Parser close -> Parser a -> Parser a
 between op cl p = do op; x <- p; cl; pure x
 
+infixr 3 :::
+private
+(:::) : a -> List a -> List a
+(:::) x xs = x :: xs
+
+many : Parser a -> Parser (List a)
+many p = scan id where
+  scan : (List a -> List a) -> Parser (List a)
+  scan f = do {x <- p; assert_total (scan (\tail => f (x :: tail))) } <|> pure (f [])
 
 ---- Testing
 testString1 : parse (string ['a', 'b']) "my_source" ['a', 'b', 'c'] = Right ['a', 'b']
