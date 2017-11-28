@@ -233,6 +233,9 @@ onFail (PT p) msg
           other       => other
       )
 
+-- TODO - remove and simplify
+-- we can use other combinators for it
+
 string : List Char -> Parser (List Char)
 string str = PT walkAll where
   walkAll (ST input pos) = walk1 str input where
@@ -278,16 +281,101 @@ optional p = do { p; pure () } <|> pure ()
 between : Parser open -> Parser close -> Parser a -> Parser a
 between op cl p = do op; x <- p; cl; pure x
 
-infixr 3 :::
-private
-(:::) : a -> List a -> List a
-(:::) x xs = x :: xs
+-- infixr 3 :::
+-- private
+-- (:::) : a -> List a -> List a
+-- (:::) x xs = x :: xs
 
 many : Parser a -> Parser (List a)
--- many p = scan id where
---   scan : (List a -> List a) -> Parser (List a)
---   scan f = do {x <- p; assert_total (scan (\tail => f (x :: tail))) } <|> pure (f [])
-many p = (try ((pure (:::) <*> p) <*>| many p)) <|> pure []
+many p = scan id where
+  scan : (List a -> List a) -> Parser (List a)
+  scan f = do {x <- p; assert_total (scan (\tail => f (x :: tail))) } <|> pure (f [])
+-- many p = (try ((pure (:::) <*> p) <*>| many p)) <|> pure []
+
+many1 : Parser a -> Parser (List a)
+many1 p = do x <- p; xs <- many p; pure (x :: xs)
+
+skipMany : Parser a -> Parser ()
+skipMany p = do xs <- (many p); pure ()
+
+skipMany1 : Parser a -> Parser ()
+skipMany1 p = do x <- (many1 p); pure ()
+
+sepBy1 : Parser a -> Parser sep -> Parser (List a)
+sepBy1 p sep = do x <- p ; xs <- many (sep *> p); pure (x :: xs)
+
+sepBy : Parser a -> Parser sep -> Parser (List a)
+sepBy p sep = sepBy1 p sep <|> pure []
+
+count : Nat -> Parser a -> Parser (List a)
+count Z _ = pure []
+count n p = sequence (take n (repeat p))
+
+chainl1 : Parser a -> Parser (a -> a -> a) -> Parser a
+chainl1 p op = do x <- p; rest x
+  where
+    rest : a -> Parser a
+    rest x = do {f <- op; y <- p; (assert_total (rest (f x y)))} <|> pure x
+
+chainr1 : Parser a -> Parser (a -> a -> a) -> Parser a
+chainr1 p op = scan where
+  mutual
+    scan : Parser a
+    scan = do x <- p; rest x
+    rest : a -> Parser a
+    rest x = do {f <- op; y <- (assert_total scan); pure (f x y)} <|> pure x
+
+chainr : Parser a -> Parser (a -> a -> a) -> a-> Parser a
+chainr p op x       = (chainr1 p op) <|> (pure x)
+chainl : Parser a -> Parser (a -> a -> a) -> a-> Parser a
+chainl p op x       = (chainl1 p op) <|> (pure x)
+
+notFollowedBy : Parser Char -> Parser ()
+notFollowedBy p = try (do { c <- p; unexpected (show [c]) } <|> pure ())
+
+eof : Parser ()
+eof = notFollowedBy anySymbol
+
+manyTill : Parser a -> Parser end -> Parser (List a)
+manyTill p end = scan where
+  scan : Parser (List a)
+  scan = do { end; pure [] } <|> do { x <- p; xs <- (assert_total scan); pure (x :: xs) }
+
+lookAhead : Parser a -> Parser a
+lookAhead p = do state <- getState
+                 x <- p
+                 setState state
+                 pure x
+
+char : Char -> Parser Char
+char c = satisfy (c ==)
+
+space : Parser Char
+space = satisfy isSpace
+
+newline : Parser Char
+newline = char '\n'
+
+upper : Parser Char
+upper = satisfy isUpper
+
+lower : Parser Char
+lower = satisfy isLower
+
+alphaNum : Parser Char
+alphaNum = satisfy isAlphaNum
+
+letter : Parser Char
+letter = satisfy isAlpha
+
+digit : Parser Char
+digit = satisfy isDigit
+
+hexDigit : Parser Char
+hexDigit = satisfy isHexDigit
+
+octDigit : Parser Char
+octDigit = satisfy isOctDigit
 
 ---- Testing
 testString1 : parse (string ['a', 'b']) "my_source" ['a', 'b', 'c'] = Right ['a', 'b']
