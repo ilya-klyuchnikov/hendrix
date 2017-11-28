@@ -284,9 +284,10 @@ private
 (:::) x xs = x :: xs
 
 many : Parser a -> Parser (List a)
-many p = scan id where
-  scan : (List a -> List a) -> Parser (List a)
-  scan f = do {x <- p; assert_total (scan (\tail => f (x :: tail))) } <|> pure (f [])
+-- many p = scan id where
+--   scan : (List a -> List a) -> Parser (List a)
+--   scan f = do {x <- p; assert_total (scan (\tail => f (x :: tail))) } <|> pure (f [])
+many p = (try ((pure (:::) <*> p) <*>| many p)) <|> pure []
 
 ---- Testing
 testString1 : parse (string ['a', 'b']) "my_source" ['a', 'b', 'c'] = Right ['a', 'b']
