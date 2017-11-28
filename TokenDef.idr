@@ -20,3 +20,6 @@ henk  = record
           , reservedNames   = [ "case", "data", "letrec", "type", "import", "in", "let", "of", "at", "Int"]
           , caseSensitive   = True
           } emptyStyle
+
+tokenDef : TokenDefinition
+tokenDef = henk

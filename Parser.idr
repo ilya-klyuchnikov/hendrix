@@ -258,6 +258,9 @@ string str = PT walkAll where
     walk1 xs []               = Empty (errEof)
     walk1 (x :: xs) (c :: cs) = if x == c then Consumed (walk xs cs) else Empty (errExpect c)
 
+string' : String -> Parser (List Char)
+string' s = string (cast s)
+
 oneOf :  List Char -> Parser Char
 oneOf cs  = satisfy (\c => c `elem` cs)
 
